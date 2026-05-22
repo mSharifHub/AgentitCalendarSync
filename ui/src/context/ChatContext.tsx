@@ -54,13 +54,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setThreads(savedThreads)
 
         // Find which sessions are still alive on the backend
+        let liveIdsSet = new Set<string>()
         try {
           const [sessionsRes, userRes] = await Promise.all([
             fetch(`${SERVER_URL}/sessions`),
             fetch(`${SERVER_URL}/user`),
           ])
-          const sessionsData: { sessions: Record<string, unknown> } = await sessionsRes.json()
-          setLiveIds(new Set(Object.keys(sessionsData.sessions)))
+          if (sessionsRes.ok) {
+            const sessionsData: { sessions: Record<string, unknown> } = await sessionsRes.json()
+            liveIdsSet = new Set(Object.keys(sessionsData.sessions))
+            setLiveIds(liveIdsSet)
+          }
           if (userRes.ok) {
             const u = await userRes.json()
             setUserName(u.given_name || u.name || '')
@@ -69,12 +73,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         } catch { /* backend unreachable */ }
 
         const restore = savedActiveId ?? savedThreads[0]?.id ?? null
-        if (restore) {
+        if (restore && liveIdsSet.has(restore)) {
           setActiveId(restore)
+          // view will be decided by AppContent based on isAnyConnected and session validity
           setView('chat')
+        } else if (restore) {
+          // Thread exists but session is dead
+          setActiveId(restore)
+          setView('settings')
         }
       } else {
-        // First launch: show providers screen unless user already went through it
+        // First launch or no threads
         const providersDone = localStorage.getItem('providersDone')
         setView(providersDone ? 'settings' : 'providers')
       }

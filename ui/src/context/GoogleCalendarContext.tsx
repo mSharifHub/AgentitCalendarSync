@@ -1,14 +1,16 @@
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useRef, useCallback, ReactNode } from 'react'
 import { SERVER_URL } from '../types'
 
 interface GoogleCalendarState {
   isConnected: boolean
-  connecting: boolean    // OAuth flow in progress (blocking browser)
+  connecting: boolean    // setup/token exchange in progress
+  polling: boolean       // waiting for user to complete OAuth in browser tab
   error: string
 }
 
 interface GoogleCalendarContextType extends GoogleCalendarState {
-  connect: () => Promise<void>
+  /** Store Google app credentials and return the auth URL. Opens the URL in a new tab. */
+  setup: (clientId: string, clientSecret: string) => Promise<void>
   disconnect: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -18,7 +20,9 @@ const GoogleCalendarContext = createContext<GoogleCalendarContextType | null>(nu
 export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
   const [isConnected, setConnected] = useState(false)
   const [connecting, setConnecting] = useState(false)
+  const [polling, setPolling]       = useState(false)
   const [error, setError]           = useState('')
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -32,25 +36,49 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { refresh() }, [refresh])
 
-  const connect = async () => {
+  // Stop polling once connected or on unmount
+  useEffect(() => {
+    if (!polling) return
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${SERVER_URL}/calendars/status`)
+        const data = await res.json()
+        if (data.google) {
+          clearInterval(pollRef.current!)
+          pollRef.current = null
+          setPolling(false)
+          setConnected(true)
+        }
+      } catch { /* ignore */ }
+    }, 2000)
+    return () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    }
+  }, [polling])
+
+  const setup = async (clientId: string, clientSecret: string) => {
     setConnecting(true)
     setError('')
     try {
-      // POST blocks on the backend until the user completes the browser OAuth flow
-      const res = await fetch(`${SERVER_URL}/auth/google/connect`, { method: 'POST' })
-      if (!res.ok) {
-        const d = await res.json()
-        throw new Error(d.detail || 'Connection failed')
-      }
-      await refresh()
+      const res = await fetch(`${SERVER_URL}/auth/google/setup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId, client_secret: clientSecret }),
+      })
+      if (!res.ok) throw new Error((await res.json()).detail || 'Setup failed')
+      const { auth_url } = await res.json()
+      window.open(auth_url, '_blank', 'width=600,height=700')
+      setConnecting(false)
+      setPolling(true)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Connection failed')
-    } finally {
+      setError(e instanceof Error ? e.message : 'Setup failed')
       setConnecting(false)
     }
   }
 
   const disconnect = async () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    setPolling(false)
     setConnecting(true)
     setError('')
     try {
@@ -64,7 +92,7 @@ export function GoogleCalendarProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <GoogleCalendarContext.Provider value={{ isConnected, connecting, error, connect, disconnect, refresh }}>
+    <GoogleCalendarContext.Provider value={{ isConnected, connecting, polling, error, setup, disconnect, refresh }}>
       {children}
     </GoogleCalendarContext.Provider>
   )

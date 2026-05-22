@@ -26,6 +26,8 @@ interface CalendarContextType {
   calendly: ReturnType<typeof useCalendly>
   /** Re-fetch status from all four providers simultaneously. */
   refreshAll: () => Promise<void>
+  /** True if at least one provider is connected. */
+  isAnyConnected: boolean
 }
 
 const CalendarContext = createContext<CalendarContextType | null>(null)
@@ -38,6 +40,8 @@ function CalendarAggregator({ children }: { children: ReactNode }) {
   const apple   = useAppleCalendar()
   const calendly = useCalendly()
 
+  const isAnyConnected = google.isConnected || outlook.isConnected || apple.isConnected || calendly.isConnected
+
   const refreshAll = useCallback(async () => {
     await Promise.all([
       google.refresh(),
@@ -48,7 +52,7 @@ function CalendarAggregator({ children }: { children: ReactNode }) {
   }, [google.refresh, outlook.refresh, apple.refresh, calendly.refresh])
 
   return (
-    <CalendarContext.Provider value={{ google, outlook, apple, calendly, refreshAll }}>
+    <CalendarContext.Provider value={{ google, outlook, apple, calendly, refreshAll, isAnyConnected }}>
       {children}
     </CalendarContext.Provider>
   )

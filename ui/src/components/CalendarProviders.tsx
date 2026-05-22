@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useChat } from '../context/ChatContext'
 import { useCalendars } from '../context/CalendarContext'
 
-type Modal = 'outlook' | 'apple' | 'calendly' | null
+type Modal = 'google' | 'outlook' | 'apple' | 'calendly' | null
 
 // ---------- SVG logos ----------
 
@@ -159,6 +159,60 @@ function ModalActions({
   )
 }
 
+// ---------- Google modal (uses context) ----------
+
+function GoogleModal({ onClose }: { onClose: () => void }) {
+  const { google } = useCalendars()
+  const [clientId, setClientId]         = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [localError, setLocalError]     = useState('')
+
+  const handleConnect = async () => {
+    if (!clientId.trim() || !clientSecret.trim()) {
+      setLocalError('Client ID and Client Secret are required.')
+      return
+    }
+    setLocalError('')
+    await google.setup(clientId, clientSecret)
+  }
+
+  // If connected successfully via polling, close modal
+  useEffect(() => {
+    if (google.isConnected) onClose()
+  }, [google.isConnected, onClose])
+
+  const err = localError || google.error
+
+  return (
+    <Modal title="Configure Google Calendar">
+      <p className="text-sm text-gray-500 mb-5">
+        To connect, you need to create an <span className="font-medium text-blue-600">OAuth 2.0 Client ID</span> in the Google Cloud Console.
+        Set the redirect URI to: <code className="bg-gray-100 px-1 rounded text-blue-700">http://localhost:8000/auth/google/callback</code>
+      </p>
+      <div className="space-y-4">
+        <Field label="Client ID" required>
+          <input className={inputCls} value={clientId} onChange={e => setClientId(e.target.value)} placeholder="xxxxx.apps.googleusercontent.com"/>
+        </Field>
+        <Field label="Client Secret" required>
+          <input className={inputCls} type="password" value={clientSecret} onChange={e => setClientSecret(e.target.value)} placeholder="GOCSPX-xxxx"/>
+        </Field>
+      </div>
+      {err && <p className="text-red-500 text-sm mt-3">{err}</p>}
+      {google.polling && (
+        <div className="mt-4 p-3 bg-blue-50 border border-blue-100 rounded-xl flex items-center gap-3">
+          <svg className="animate-spin w-5 h-5 text-blue-500" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          <p className="text-sm text-blue-700 font-medium">Please complete the login in the new tab...</p>
+        </div>
+      )}
+      <ModalActions onCancel={onClose} onConfirm={handleConnect} disabled={google.connecting || google.polling}
+        confirmLabel={google.connecting ? 'Setting up…' : google.polling ? 'Waiting…' : 'Open Auth Page'}/>
+    </Modal>
+  )
+}
+
 // ---------- Outlook modal (uses context) ----------
 
 function OutlookModal({ onClose }: { onClose: () => void }) {
@@ -284,7 +338,7 @@ function CalendlyModal({ onClose }: { onClose: () => void }) {
 
 export default function CalendarProviders() {
   const { setView }                          = useChat()
-  const { google, outlook, apple, calendly, refreshAll } = useCalendars()
+  const { google, outlook, apple, calendly, refreshAll, isAnyConnected } = useCalendars()
   const [modal, setModal]                    = useState<Modal>(null)
 
   // Re-fetch status every time this screen is shown so the UI always reflects reality
@@ -299,7 +353,7 @@ export default function CalendarProviders() {
       return
     }
 
-    if (provider === 'google')   { google.connect(); return }
+    if (provider === 'google')   { setModal('google'); return }
     if (provider === 'outlook')  { setModal('outlook'); return }
     if (provider === 'apple')    { setModal('apple'); return }
     if (provider === 'calendly') { setModal('calendly'); return }
@@ -319,7 +373,7 @@ export default function CalendarProviders() {
         <div className="grid grid-cols-2 gap-5 mb-8">
           <ProviderCard
             logo={<GoogleLogo />} name="Google" subtitle="Click to connect via OAuth2"
-            connected={google.isConnected} busy={google.connecting}
+            connected={google.isConnected} busy={google.connecting || google.polling}
             onClick={() => handleCardClick('google')}
           />
           <ProviderCard
@@ -342,16 +396,20 @@ export default function CalendarProviders() {
         {/* Continue */}
         <button
           onClick={() => { localStorage.setItem('providersDone', '1'); setView('settings') }}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium
-                     text-lg rounded-full py-4 transition-colors cursor-pointer"
+          disabled={!isAnyConnected}
+          className={`w-full font-medium text-lg rounded-full py-4 transition-colors cursor-pointer
+                     ${isAnyConnected 
+                       ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+                       : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
         >
-          Continue →
+          {isAnyConnected ? 'Continue →' : 'Connect a calendar to continue'}
         </button>
         <p className="text-center text-sm text-gray-400 mt-3">
           You can connect more providers later from Settings
         </p>
       </div>
 
+      {modal === 'google'   && <GoogleModal   onClose={() => setModal(null)}/>}
       {modal === 'outlook'  && <OutlookModal  onClose={() => setModal(null)}/>}
       {modal === 'apple'    && <AppleModal    onClose={() => setModal(null)}/>}
       {modal === 'calendly' && <CalendlyModal onClose={() => setModal(null)}/>}
